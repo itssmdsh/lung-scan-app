@@ -154,26 +154,42 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
     return heatmap.numpy()
 
-def generate_gradcam_overlay(img_pil, model):
-    img_array = np.array(img_pil.resize((224, 224))).astype('float32') / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    last_conv_layer = None
-    for layer in reversed(model.layers):
-        if isinstance(layer, tf.keras.layers.Conv2D):
-            last_conv_layer = layer.name
-            break
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    grad_model = tf.keras.models.Model(
+        inputs=model.inputs,
+        outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+    )
 
-    heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer)
-    heatmap = np.uint8(255 * heatmap)
-    jet_heatmap = cm.get_cmap("jet")(np.arange(256))[:, :3]
-    jet_heatmap = jet_heatmap[heatmap]
-    jet_heatmap = cv2.resize(jet_heatmap, (224, 224))
-    jet_heatmap = tf.keras.preprocessing.image.array_to_img(jet_heatmap).resize(img_pil.size)
-    
-    original_img = np.array(img_pil)
-    superimposed_img = np.array(jet_heatmap) * 0.4 + original_img * 0.6
-    return np.uint8(superimposed_img)
+    with tf.GradientTape() as tape:
+        conv_output, preds = grad_model(img_array)
+
+        # ✅ CRITICAL FIX 1: Handle list outputs
+        if isinstance(preds, (list, tuple)):
+            preds = preds[0]
+
+        # ✅ CRITICAL FIX 2: Resolve prediction index safely
+        if pred_index is None:
+            pred_index = tf.argmax(preds, axis=-1)
+
+        if isinstance(pred_index, tf.Tensor):
+            pred_index = pred_index.numpy()
+
+        pred_index = int(np.squeeze(pred_index))
+
+        # ✅ SAFE slicing
+        class_channel = preds[:, pred_index]
+
+    grads = tape.gradient(class_channel, conv_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+    conv_output = conv_output[0]
+    heatmap = tf.reduce_sum(conv_output * pooled_grads, axis=-1)
+
+    heatmap = tf.maximum(heatmap, 0)
+    heatmap /= tf.reduce_max(heatmap) + 1e-8
+
+    return heatmap.numpy()
+
 
 def run_prediction(image, deep_scan_mode):
     start_time = time.time()
@@ -288,3 +304,4 @@ with col2:
         * **Grad-CAM** visualization for interpretability
         * **Automated Symptom Checker**
         """)
+
