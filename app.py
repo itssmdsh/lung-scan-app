@@ -52,7 +52,7 @@ CLASSES = ['Bacterial Pneumonia', 'Corona Virus Disease', 'Normal', 'Tuberculosi
 @st.cache_resource
 def load_models():
     # -----------------------------------------------------------
-    # ⚠️ IMPORTANT: REPLACE THESE WITH YOUR GOOGLE DRIVE IDs
+    # ⚠️ GOOGLE DRIVE IDs
     # -----------------------------------------------------------
     id_dense = '1aWtU79Xk1Vmrg8BsBL9VgwwZxk6eY4oz' 
     id_res   = '176xn7ZUy1iRllmtPxdcpeWplQ2nJ40sW'   
@@ -99,14 +99,17 @@ def generate_120_views(image_pil):
             
     return np.array(views)
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name):
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
     grad_model = tf.keras.models.Model(
         [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
     )
     with tf.GradientTape() as tape:
         last_conv_layer_output, preds = grad_model(img_array)
-        pred_index = tf.argmax(preds[0])
-        class_channel = preds[:, pred_index]
+        if pred_index is None:
+            pred_index = tf.argmax(preds[0])
+        
+        # FIXED: Ensure index is an integer for slicing
+        class_channel = preds[:, int(pred_index)]
 
     grads = tape.gradient(class_channel, last_conv_layer_output)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
@@ -227,5 +230,4 @@ if uploaded_file:
                     st.image(heatmap, caption="Red = Infected Region", use_column_width=True)
                 
                 # Bar Chart
-
                 st.bar_chart(dict(zip(CLASSES, probs)))
