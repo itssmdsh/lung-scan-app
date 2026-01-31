@@ -4,4 +4,5 @@ numpy
 pillow
 matplotlib
 seaborn
+gdown
 opencv-python-headless
