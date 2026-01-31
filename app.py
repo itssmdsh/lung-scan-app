@@ -6,7 +6,6 @@ from PIL import Image
 import time
 import os
 import gdown
-import matplotlib.cm as cm
 
 # ==========================================
 # 1. PAGE CONFIGURATION & THEME
@@ -109,6 +108,7 @@ with st.spinner("🏥 Booting Diagnostic Engine..."):
 # 4. CORE AI ENGINES
 # ==========================================
 def generate_120_views(image_pil):
+    """Generates 120 augmented views for Deep Scan"""
     img = np.array(image_pil.convert('RGB'))
     img = cv2.resize(img, (224, 224))
     views = []
@@ -121,58 +121,6 @@ def generate_120_views(image_pil):
             views.append(aug)
             views.append(cv2.flip(aug, 1)) 
     return np.array(views)
-
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
-    grad_model = tf.keras.models.Model(
-        [model.inputs], [model.get_layer(last_conv_layer_name).output, model.output]
-    )
-    with tf.GradientTape() as tape:
-        last_conv_layer_output, preds = grad_model(img_array)
-        if pred_index is None:
-            pred_index = tf.argmax(preds[0])
-        
-        # ---------------------------------------------------------
-        # 🛠️ ULTIMATE FIX: The .item() method handles everything
-        # ---------------------------------------------------------
-        if isinstance(pred_index, tf.Tensor):
-            pred_index = pred_index.numpy()
-        
-        if isinstance(pred_index, np.ndarray):
-            pred_index = pred_index.item()
-            
-        pred_index = int(pred_index)
-        # ---------------------------------------------------------
-
-        class_channel = preds[:, pred_index]
-
-    grads = tape.gradient(class_channel, last_conv_layer_output)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    last_conv_layer_output = last_conv_layer_output[0]
-    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-    return heatmap.numpy()
-
-def generate_gradcam_overlay(img_pil, model):
-    img_array = np.array(img_pil.resize((224, 224))).astype('float32') / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    last_conv_layer = None
-    for layer in reversed(model.layers):
-        if isinstance(layer, tf.keras.layers.Conv2D):
-            last_conv_layer = layer.name
-            break
-
-    heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer)
-    heatmap = np.uint8(255 * heatmap)
-    jet_heatmap = cm.get_cmap("jet")(np.arange(256))[:, :3]
-    jet_heatmap = jet_heatmap[heatmap]
-    jet_heatmap = cv2.resize(jet_heatmap, (224, 224))
-    jet_heatmap = tf.keras.preprocessing.image.array_to_img(jet_heatmap).resize(img_pil.size)
-    
-    original_img = np.array(img_pil)
-    superimposed_img = np.array(jet_heatmap) * 0.4 + original_img * 0.6
-    return np.uint8(superimposed_img)
 
 def run_prediction(image, deep_scan_mode):
     start_time = time.time()
@@ -218,9 +166,8 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     deep_mode = st.toggle("🧬 Deep Scan (High Accuracy)", value=False)
-    explain_ai = st.toggle("🔥 Explain AI (Heatmap)", value=True)
     st.markdown("---")
-    st.caption("v1.0.8 | ResNet50V2 + DenseNet121")
+    st.caption("v1.1.0 | ResNet50V2 + DenseNet121")
 
 st.title("🫁 LungScan AI")
 st.markdown("### Advanced Chest X-Ray Diagnostic System")
@@ -255,6 +202,7 @@ with col2:
                     color = "#c62828"
                     status = f"⚠️ Abnormality Detected: {label.replace('_', ' ')}"
                 
+                # Result Card
                 st.markdown(f"""
                 <div class="report-view" style="border-top: 6px solid {color};">
                     <h3 style="color: {color}; margin:0; font-weight:bold;">{status}</h3>
@@ -265,16 +213,13 @@ with col2:
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # Symptoms
                 st.markdown(f"##### 🩺 Typical Symptoms ({label.replace('_', ' ')})")
                 symptoms_list = SYMPTOMS.get(label, [])
                 symptoms_html = "".join([f"<li>{s}</li>" for s in symptoms_list])
                 st.markdown(f"<div class='symptom-box'><ul>{symptoms_html}</ul></div>", unsafe_allow_html=True)
-
-                if explain_ai and label != "Normal":
-                    st.markdown("##### 🔥 AI Attention Map (Lesion Localization)")
-                    heatmap = generate_gradcam_overlay(image, model_res)
-                    st.image(heatmap, caption="Red Areas Indicate Disease Pattern", use_container_width=True)
                 
+                # Probability Chart
                 st.markdown("##### Detailed Probability Distribution")
                 st.bar_chart(dict(zip(CLASSES, probs)), color=color)
 
@@ -284,6 +229,5 @@ with col2:
         **System Capabilities:**
         * **97%+ Accuracy** using Ensemble Learning
         * **120-View Deep Scan** for edge cases
-        * **Grad-CAM** visualization for interpretability
         * **Automated Symptom Checker**
         """)
