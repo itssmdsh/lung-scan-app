@@ -8,69 +8,52 @@ import os
 import gdown
 import matplotlib.cm as cm
 
-# ==========================================
-# 1. PAGE CONFIGURATION
-# ==========================================
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 st.set_page_config(
-    page_title="LungScan AI | Medical Diagnostic System",
+    page_title="LungScan AI",
     page_icon="🫁",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# ==========================================
-# 2. THEME
-# ==========================================
+# =====================================================
+# UI STYLE
+# =====================================================
 st.markdown("""
 <style>
 .stApp { background: linear-gradient(to bottom right, #f8f9fa, #e3f2fd); }
-h1 { color: #1565C0; text-align: center; }
+h1 { text-align: center; color: #1565C0; }
 .stButton>button {
     width: 100%;
+    height: 55px;
+    font-size: 18px;
     background-color: #1976D2;
     color: white;
-    font-weight: bold;
-    height: 55px;
     border-radius: 8px;
-    font-size: 18px;
 }
-.report-view {
+.report {
     background: white;
-    padding: 30px;
-    border-radius: 15px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.08);
-}
-.symptom-box {
-    background: #fff3e0;
-    padding: 15px;
-    border-left: 5px solid #ff9800;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 3. LABELS & SYMPTOMS
-# ==========================================
-CLASSES = ['Bacterial Pneumonia', 'Corona Virus Disease', 'Normal', 'Tuberculosis']
+# =====================================================
+# LABELS
+# =====================================================
+CLASSES = [
+    "Bacterial Pneumonia",
+    "Corona Virus Disease",
+    "Normal",
+    "Tuberculosis"
+]
 
-SYMPTOMS = {
-    'Bacterial Pneumonia': [
-        "High fever", "Productive cough", "Chest pain", "Shortness of breath"
-    ],
-    'Corona Virus Disease': [
-        "Fever", "Dry cough", "Loss of smell", "Breathing difficulty"
-    ],
-    'Tuberculosis': [
-        "Chronic cough", "Weight loss", "Night sweats", "Blood in sputum"
-    ],
-    'Normal': [
-        "No abnormalities detected", "Healthy lung fields"
-    ]
-}
-
-# ==========================================
-# 4. MODEL LOADING
-# ==========================================
+# =====================================================
+# LOAD MODELS
+# =====================================================
 @st.cache_resource
 def load_models():
     dense_id = "1aWtU79Xk1Vmrg8BsBL9VgwwZxk6eY4oz"
@@ -82,24 +65,23 @@ def load_models():
     if not os.path.exists("Final_ResNet.keras"):
         gdown.download(id=res_id, output="Final_ResNet.keras", quiet=False)
 
-    return (
-        tf.keras.models.load_model("Final_DenseNet.keras"),
-        tf.keras.models.load_model("Final_ResNet.keras")
-    )
+    dense = tf.keras.models.load_model("Final_DenseNet.keras")
+    res   = tf.keras.models.load_model("Final_ResNet.keras")
+    return dense, res
 
 model_dense, model_res = load_models()
 
-# ==========================================
-# 5. IMAGE AUGMENTATION
-# ==========================================
-def generate_120_views(image_pil):
-    img = cv2.resize(np.array(image_pil), (224, 224))
+# =====================================================
+# IMAGE AUGMENTATION (DEEP SCAN)
+# =====================================================
+def generate_120_views(img_pil):
+    img = cv2.resize(np.array(img_pil), (224, 224))
     h, w = img.shape[:2]
     center = (w // 2, h // 2)
     views = []
 
     for angle in range(-14, 15, 2):
-        for scale in [1.0, 1.05, 1.10, 1.15]:
+        for scale in [1.0, 1.05, 1.1, 1.15]:
             M = cv2.getRotationMatrix2D(center, angle, scale)
             aug = cv2.warpAffine(img, M, (w, h))
             views.append(aug)
@@ -107,38 +89,34 @@ def generate_120_views(image_pil):
 
     return np.array(views)
 
-# ==========================================
-# 6. 🔥 FIXED GRAD-CAM (CRASH-PROOF)
-# ==========================================
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+# =====================================================
+# 🔥 GRAD-CAM (CRASH-PROOF, KERAS 3 SAFE)
+# =====================================================
+def make_gradcam_heatmap(img_array, model, last_conv_layer):
     grad_model = tf.keras.models.Model(
         inputs=model.inputs,
-        outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+        outputs=[
+            model.get_layer(last_conv_layer).output,
+            model.output
+        ]
     )
 
     with tf.GradientTape() as tape:
-        conv_output, preds = grad_model(img_array)
+        conv_outputs, predictions = grad_model(img_array)
 
-        # FIX 1: Handle list outputs (Keras 3)
-        if isinstance(preds, (list, tuple)):
-            preds = preds[0]
+        # 🔒 Keras 3 safety
+        if isinstance(predictions, (list, tuple)):
+            predictions = predictions[0]
 
-        # FIX 2: Safe index extraction
-        if pred_index is None:
-            pred_index = tf.argmax(preds, axis=-1)
+        class_idx = tf.argmax(predictions, axis=-1)
+        class_score = tf.gather(predictions[0], class_idx)
 
-        if isinstance(pred_index, tf.Tensor):
-            pred_index = pred_index.numpy()
-
-        pred_index = int(np.squeeze(pred_index))
-
-        class_channel = preds[:, pred_index]
-
-    grads = tape.gradient(class_channel, conv_output)
+    grads = tape.gradient(class_score, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
-    conv_output = conv_output[0]
-    heatmap = tf.reduce_sum(conv_output * pooled_grads, axis=-1)
+    conv_outputs = conv_outputs[0]
+    heatmap = tf.reduce_sum(conv_outputs * pooled_grads, axis=-1)
+
     heatmap = tf.maximum(heatmap, 0)
     heatmap /= tf.reduce_max(heatmap) + 1e-8
 
@@ -163,10 +141,10 @@ def generate_gradcam_overlay(img_pil, model):
 
     return overlay.astype(np.uint8)
 
-# ==========================================
-# 7. PREDICTION ENGINE
-# ==========================================
-def run_prediction(image, deep_scan):
+# =====================================================
+# PREDICTION
+# =====================================================
+def predict(image, deep_scan):
     start = time.time()
 
     if deep_scan:
@@ -184,45 +162,36 @@ def run_prediction(image, deep_scan):
 
     return probs, time.time() - start
 
-# ==========================================
-# 8. UI
-# ==========================================
+# =====================================================
+# UI
+# =====================================================
 st.title("🫁 LungScan AI")
-st.markdown("### Advanced Chest X-Ray Diagnostic System")
 
-deep_mode = st.toggle("🧬 Deep Scan Mode", False)
+deep_scan = st.toggle("🧬 Deep Scan (120 Views)", False)
 explain_ai = st.toggle("🔥 Explain AI (Grad-CAM)", True)
 
-uploaded = st.file_uploader("Upload Chest X-Ray", type=["jpg", "png", "jpeg"])
+file = st.file_uploader("Upload Chest X-Ray", type=["jpg", "png", "jpeg"])
 
-if uploaded:
-    image = Image.open(uploaded).convert("RGB")
+if file:
+    image = Image.open(file).convert("RGB")
     st.image(image, width=350)
 
     if st.button("🔍 Analyze"):
-        probs, t = run_prediction(image, deep_mode)
-        idx = np.argmax(probs)
+        probs, t = predict(image, deep_scan)
+        idx = int(np.argmax(probs))
         label = CLASSES[idx]
 
         st.markdown(f"""
-        <div class="report-view">
+        <div class="report">
             <h3>{label}</h3>
             <h1>{probs[idx]*100:.1f}%</h1>
             <p>⏱ {t:.2f}s</p>
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("#### Symptoms")
-        st.markdown(
-            "<div class='symptom-box'><ul>" +
-            "".join(f"<li>{s}</li>" for s in SYMPTOMS[label]) +
-            "</ul></div>",
-            unsafe_allow_html=True
-        )
-
         if explain_ai and label != "Normal":
-            st.markdown("#### 🔥 AI Attention Map")
+            st.subheader("🔥 AI Attention Map")
             st.image(generate_gradcam_overlay(image, model_res))
 
-        st.markdown("#### Probability Distribution")
+        st.subheader("Class Probabilities")
         st.bar_chart(dict(zip(CLASSES, probs)))
