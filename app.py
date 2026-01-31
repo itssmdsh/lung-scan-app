@@ -132,14 +132,19 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
             pred_index = tf.argmax(preds[0])
         
         # ---------------------------------------------------------
-        # 🛠️ FIXED: Safe conversion from Tensor/Array to Int
+        # 🛠️ NUCLEAR FIX: Handle Scalar vs Array conversion
         # ---------------------------------------------------------
-        if hasattr(pred_index, 'numpy'):
+        if isinstance(pred_index, tf.Tensor):
             pred_index = pred_index.numpy()
-        if hasattr(pred_index, 'item'):
-            pred_index = pred_index.item()
+        
+        if isinstance(pred_index, np.ndarray):
+            # If it's an array like [2], flatten to get 2
+            pred_index = pred_index.flatten()[0]
             
-        class_channel = preds[:, int(pred_index)]
+        # Final safety cast to plain Python integer
+        pred_index = int(pred_index)
+            
+        class_channel = preds[:, pred_index]
 
     grads = tape.gradient(class_channel, last_conv_layer_output)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
@@ -216,7 +221,7 @@ with st.sidebar:
     deep_mode = st.toggle("🧬 Deep Scan (High Accuracy)", value=False)
     explain_ai = st.toggle("🔥 Explain AI (Heatmap)", value=True)
     st.markdown("---")
-    st.caption("v1.0.6 | ResNet50V2 + DenseNet121")
+    st.caption("v1.0.7 | ResNet50V2 + DenseNet121")
 
 st.title("🫁 LungScan AI")
 st.markdown("### Advanced Chest X-Ray Diagnostic System")
