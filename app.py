@@ -54,8 +54,8 @@ def load_models():
     # -----------------------------------------------------------
     # ⚠️ IMPORTANT: REPLACE THESE WITH YOUR GOOGLE DRIVE IDs
     # -----------------------------------------------------------
-    id_dense = 'https://drive.google.com/file/d/1aWtU79Xk1Vmrg8BsBL9VgwwZxk6eY4oz/view?usp=drive_link' 
-    id_res   = 'https://drive.google.com/file/d/176xn7ZUy1iRllmtPxdcpeWplQ2nJ40sW/view?usp=drive_link'   
+    id_dense = '1aWtU79Xk1Vmrg8BsBL9VgwwZxk6eY4oz' 
+    id_res   = '176xn7ZUy1iRllmtPxdcpeWplQ2nJ40sW'   
     
     # 1. Download DenseNet if missing
     if not os.path.exists("Final_DenseNet.keras"):
@@ -227,4 +227,5 @@ if uploaded_file:
                     st.image(heatmap, caption="Red = Infected Region", use_column_width=True)
                 
                 # Bar Chart
+
                 st.bar_chart(dict(zip(CLASSES, probs)))
